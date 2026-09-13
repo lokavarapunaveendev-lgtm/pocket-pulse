@@ -8,17 +8,6 @@ import {
   Eye, EyeOff, KeyRound, HelpCircle, Sparkles, ArrowRight
 } from 'lucide-react';
 
-// Firebase Imports
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { 
-  getFirestore, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  onSnapshot 
-} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-
-// PocketPulse Project Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyCSqQ0_tBbL_VhgNK5PjEnhh5_E-_K2YIk",
   authDomain: "pocket-pulse-607bc.firebaseapp.com",
@@ -29,8 +18,15 @@ const firebaseConfig = {
   measurementId: "G-RG7TFM5D5H"
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+const getDb = () => {
+  if (typeof window !== "undefined" && window.firebase) {
+    if (!window.firebase.apps.length) {
+      window.firebase.initializeApp(firebaseConfig);
+    }
+    return window.firebase.firestore();
+  }
+  return null;
+};
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -70,7 +66,6 @@ export default function App() {
     }, 2500);
   };
 
-  // Connectivity Listener
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
@@ -84,7 +79,6 @@ export default function App() {
     };
   }, []);
 
-  // Auth & Session States
   const [activePin, setActivePin] = useState(() => {
     return localStorage.getItem("pocketpulse_active_pin") || "";
   });
@@ -92,7 +86,7 @@ export default function App() {
     return localStorage.getItem("pocketpulse_logged_in") === "true";
   });
 
-  const [authMode, setAuthMode] = useState("login"); // 'login' | 'setup' | 'forgot' | 'reset'
+  const [authMode, setAuthMode] = useState("login");
   const [inputPin, setInputPin] = useState("");
   const [inputSec, setInputSec] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -100,7 +94,6 @@ export default function App() {
   const [showPinText, setShowPinText] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // Navigation tabs: 'dashboard' | 'analytics' | 'budget'
   const [activeTab, setActiveTab] = useState("dashboard");
 
   const getDefaultCycleData = () => {
@@ -131,7 +124,6 @@ export default function App() {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [selectedAnalyticsIdx, setSelectedAnalyticsIdx] = useState(0);
 
-  // Forms
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -141,13 +133,15 @@ export default function App() {
   const [dateFilterMode, setDateFilterMode] = useState("all");
   const [customFilterDate, setCustomFilterDate] = useState(formatToISODate(new Date()));
 
-  // Cloud Sync Listener
+  // Cloud Firestore Synchronization Listener
   useEffect(() => {
     if (!isAuthenticated || !activePin) return;
 
-    const vaultDocRef = doc(db, "vaults", activePin);
-    const unsubscribe = onSnapshot(vaultDocRef, (docSnap) => {
-      if (docSnap.exists()) {
+    const db = getDb();
+    if (!db) return;
+
+    const unsubscribe = db.collection("vaults").doc(activePin).onSnapshot((docSnap) => {
+      if (docSnap.exists) {
         const cloudData = docSnap.data().ledgerData;
         if (cloudData && Array.isArray(cloudData)) {
           setData(cloudData);
@@ -168,11 +162,13 @@ export default function App() {
     localStorage.setItem("pocketpulse_ledger_store_v14", JSON.stringify(updatedData));
     if (activePin) {
       try {
-        const vaultDocRef = doc(db, "vaults", activePin);
-        await setDoc(vaultDocRef, { 
-          ledgerData: updatedData, 
-          lastModified: new Date().toISOString() 
-        }, { merge: true });
+        const db = getDb();
+        if (db) {
+          await db.collection("vaults").doc(activePin).set({ 
+            ledgerData: updatedData, 
+            lastModified: new Date().toISOString() 
+          }, { merge: true });
+        }
       } catch (err) {
         console.error("Failed to sync to cloud:", err);
       }
@@ -218,7 +214,7 @@ export default function App() {
 
   const currentDiscipline = calculateDiscipline(totalSpent, activeMonth.budget);
 
-  // AUTH ACTIONS
+  // Authentication Handlers
   const handleSetupPin = async (e) => {
     e.preventDefault();
     const pin = inputPin.trim();
@@ -236,17 +232,19 @@ export default function App() {
     try {
       setIsAuthenticating(true);
       setAuthError("");
-      const docRef = doc(db, "vaults", pin);
-      const docSnap = await getDoc(docRef);
+      const db = getDb();
+      if (!db) throw new Error("Database service unavailable.");
 
-      if (docSnap.exists()) {
-        setAuthError("This passcode is already claimed. Please choose a different unique passcode.");
+      const docSnap = await db.collection("vaults").doc(pin).get();
+
+      if (docSnap.exists) {
+        setAuthError("This passcode is already claimed. Choose a different unique passcode.");
         setIsAuthenticating(false);
         return;
       }
 
       const initialLedger = getDefaultCycleData();
-      await setDoc(docRef, {
+      await db.collection("vaults").doc(pin).set({
         pin: pin,
         secAnswer: sec,
         ledgerData: initialLedger,
@@ -277,10 +275,12 @@ export default function App() {
     try {
       setIsAuthenticating(true);
       setAuthError("");
-      const docRef = doc(db, "vaults", pin);
-      const docSnap = await getDoc(docRef);
+      const db = getDb();
+      if (!db) throw new Error("Database service unavailable.");
 
-      if (docSnap.exists()) {
+      const docSnap = await db.collection("vaults").doc(pin).get();
+
+      if (docSnap.exists) {
         const cloudData = docSnap.data().ledgerData || getDefaultCycleData();
         setActivePin(pin);
         localStorage.setItem("pocketpulse_active_pin", pin);
@@ -293,7 +293,7 @@ export default function App() {
         setAuthError("Invalid passcode or vault not registered.");
       }
     } catch (err) {
-      setAuthError("Network connection failure: " + err.message);
+      setAuthError("Connection failure: " + err.message);
     } finally {
       setIsAuthenticating(false);
     }
@@ -312,10 +312,12 @@ export default function App() {
     try {
       setIsAuthenticating(true);
       setAuthError("");
-      const docRef = doc(db, "vaults", pin);
-      const docSnap = await getDoc(docRef);
+      const db = getDb();
+      if (!db) throw new Error("Database service unavailable.");
 
-      if (docSnap.exists() && docSnap.data().secAnswer === sec) {
+      const docSnap = await db.collection("vaults").doc(pin).get();
+
+      if (docSnap.exists && docSnap.data().secAnswer === sec) {
         setAuthMode("reset");
       } else {
         setAuthError("Verification failed: Passcode or Keyword incorrect.");
@@ -338,21 +340,20 @@ export default function App() {
     try {
       setIsAuthenticating(true);
       setAuthError("");
-      // Check if newPin already exists
-      const targetDocRef = doc(db, "vaults", nPin);
-      const targetSnap = await getDoc(targetDocRef);
-      if (targetSnap.exists() && nPin !== inputPin.trim()) {
+      const db = getDb();
+      if (!db) throw new Error("Database service unavailable.");
+
+      const targetSnap = await db.collection("vaults").doc(nPin).get();
+      if (targetSnap.exists && nPin !== inputPin.trim()) {
         setAuthError("New passcode is already taken by another vault.");
         setIsAuthenticating(false);
         return;
       }
 
-      const oldDocRef = doc(db, "vaults", inputPin.trim());
-      const oldSnap = await getDoc(oldDocRef);
-
-      if (oldSnap.exists()) {
+      const oldSnap = await db.collection("vaults").doc(inputPin.trim()).get();
+      if (oldSnap.exists) {
         const oldData = oldSnap.data();
-        await setDoc(targetDocRef, {
+        await db.collection("vaults").doc(nPin).set({
           ...oldData,
           pin: nPin,
           lastModified: new Date().toISOString()
@@ -381,7 +382,6 @@ export default function App() {
     setInputSec("");
   };
 
-  // Add Expense
   const handleAddExpense = (e) => {
     e.preventDefault();
     if (!title.trim() || !amount) {
@@ -410,7 +410,6 @@ export default function App() {
     triggerToast("Transaction Removed", "neutral");
   };
 
-  // Add Funds Inflow
   const handleAddFunds = (e) => {
     e.preventDefault();
     const addedAmount = Number(fundAmount);
@@ -498,17 +497,14 @@ export default function App() {
     );
   }
 
-  // 2. PROFESSIONAL FINTECH AUTH BOARD SCREEN
+  // 2. PROFESSIONAL FINTECH LOGIN BOARD
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-[#050811] flex items-center justify-center p-4 relative overflow-hidden font-sans">
-        {/* Ambient Glows */}
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="absolute bottom-10 right-10 w-72 h-72 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none"></div>
 
         <div className="w-full max-w-md bg-gray-900/90 border border-cyan-500/30 p-6 sm:p-8 rounded-3xl shadow-2xl backdrop-blur-2xl relative z-10">
-          
-          {/* Header Branding */}
           <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-800/80">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 bg-gradient-to-tr from-cyan-500/20 to-indigo-500/20 border border-cyan-500/40 rounded-2xl flex items-center justify-center shadow-lg shadow-cyan-950">
@@ -532,7 +528,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Mode Switcher Tabs (Sign In / Register) */}
           {(authMode === "login" || authMode === "setup") && (
             <div className="grid grid-cols-2 bg-black/50 p-1 rounded-2xl border border-gray-800 mb-6">
               <button
@@ -566,14 +561,12 @@ export default function App() {
             </div>
           )}
 
-          {/* Error Banner */}
           {authError && (
-            <div className="text-xs p-3 rounded-xl mb-4 text-center font-medium bg-rose-950/80 border border-rose-500/60 text-rose-300 animate-fade-in flex items-center justify-center gap-1.5">
-              <span>{authError}</span>
+            <div className="text-xs p-3 rounded-xl mb-4 text-center font-medium bg-rose-950/80 border border-rose-500/60 text-rose-300">
+              {authError}
             </div>
           )}
 
-          {/* 1. SIGN IN (ACCESS VAULT) */}
           {authMode === "login" && (
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
@@ -599,13 +592,13 @@ export default function App() {
                     placeholder="Enter your confidential passcode"
                     value={inputPin}
                     onChange={(e) => setInputPin(e.target.value)}
-                    className="w-full bg-black/60 border border-gray-800 rounded-xl px-4 py-3 pr-11 text-white text-sm focus:outline-none focus:border-cyan-400 transition"
+                    className="w-full bg-black/60 border border-gray-800 rounded-xl px-4 py-3 pr-11 text-white text-sm focus:outline-none focus:border-cyan-400"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowPinText(!showPinText)}
-                    className="absolute right-3 top-3 text-gray-400 hover:text-white transition"
+                    className="absolute right-3 top-3 text-gray-400 hover:text-white"
                   >
                     {showPinText ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
@@ -617,13 +610,12 @@ export default function App() {
                 disabled={isAuthenticating}
                 className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-extrabold rounded-xl transition shadow-lg shadow-cyan-500/20 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                <span>{isAuthenticating ? "Verifying Vault..." : "Unlock & Synchronize"}</span>
+                <span>{isAuthenticating ? "Verifying..." : "Unlock & Synchronize"}</span>
                 <ArrowRight size={16} />
               </button>
             </form>
           )}
 
-          {/* 2. REGISTER NEW UNIQUE VAULT */}
           {authMode === "setup" && (
             <form onSubmit={handleSetupPin} className="space-y-4">
               <div>
@@ -633,23 +625,20 @@ export default function App() {
                 <div className="relative">
                   <input 
                     type={showPinText ? "text" : "password"}
-                    placeholder="Min. 4 characters (e.g., 9494, pass#1)"
+                    placeholder="Min. 4 characters (e.g., 9494, pulse#1)"
                     value={inputPin}
                     onChange={(e) => setInputPin(e.target.value)}
-                    className="w-full bg-black/60 border border-gray-800 rounded-xl px-4 py-3 pr-11 text-white text-sm focus:outline-none focus:border-cyan-400 transition"
+                    className="w-full bg-black/60 border border-gray-800 rounded-xl px-4 py-3 pr-11 text-white text-sm focus:outline-none focus:border-cyan-400"
                     required
                   />
                   <button
                     type="button"
                     onClick={() => setShowPinText(!showPinText)}
-                    className="absolute right-3 top-3 text-gray-400 hover:text-white transition"
+                    className="absolute right-3 top-3 text-gray-400 hover:text-white"
                   >
                     {showPinText ? <EyeOff size={18} /> : <Eye size={18} />}
                   </button>
                 </div>
-                <span className="text-[10px] text-gray-500 mt-1 block">
-                  * Must be unique across all devices. No duplicate passcodes allowed.
-                </span>
               </div>
 
               <div>
@@ -658,15 +647,12 @@ export default function App() {
                 </label>
                 <input 
                   type="text"
-                  placeholder="Security keyword (e.g., favorite city or hero)"
+                  placeholder="Security keyword (for password reset)"
                   value={inputSec}
                   onChange={(e) => setInputSec(e.target.value)}
-                  className="w-full bg-black/60 border border-gray-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-400 transition"
+                  className="w-full bg-black/60 border border-gray-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-cyan-400"
                   required
                 />
-                <span className="text-[10px] text-gray-500 mt-1 block">
-                  * Essential to reset your passcode if forgotten.
-                </span>
               </div>
 
               <button 
@@ -680,7 +666,6 @@ export default function App() {
             </form>
           )}
 
-          {/* 3. FORGOT PASSCODE VERIFICATION */}
           {authMode === "forgot" && (
             <div className="space-y-4">
               <div className="text-center pb-2">
@@ -693,7 +678,7 @@ export default function App() {
                   <label className="text-xs text-gray-300 font-bold block mb-1">Target Passcode to Recover</label>
                   <input 
                     type="text"
-                    placeholder="Enter the passcode you registered"
+                    placeholder="Enter registered passcode"
                     value={inputPin}
                     onChange={(e) => setInputPin(e.target.value)}
                     className="w-full bg-black/60 border border-gray-800 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-cyan-400"
@@ -702,10 +687,10 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="text-xs text-gray-300 font-bold block mb-1">Your Recovery Secret Key</label>
+                  <label className="text-xs text-gray-300 font-bold block mb-1">Recovery Secret Key</label>
                   <input 
                     type="text"
-                    placeholder="Enter the secret keyword you defined"
+                    placeholder="Enter recovery keyword"
                     value={inputSec}
                     onChange={(e) => setInputSec(e.target.value)}
                     className="w-full bg-black/60 border border-gray-800 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-cyan-400"
@@ -735,7 +720,6 @@ export default function App() {
             </div>
           )}
 
-          {/* 4. RESET PASSCODE TO NEW VALUE */}
           {authMode === "reset" && (
             <div className="space-y-4">
               <div className="text-center pb-2">
@@ -767,22 +751,19 @@ export default function App() {
             </div>
           )}
 
-          {/* Footer Security Badge */}
           <div className="mt-6 pt-4 border-t border-gray-800/80 text-[11px] text-gray-500 flex items-center justify-center gap-1.5">
             <ShieldCheck size={14} className="text-emerald-400" />
             <span>Encrypted Multi-Device Firestore Synchronizer</span>
           </div>
-
         </div>
       </div>
     );
   }
 
-  // 3. MAIN APPLICATION INTERFACE (3 TABS)
+  // 3. MAIN DASHBOARD INTERFACE
   return (
     <div className="min-h-screen bg-[#070b14] text-white p-3 sm:p-6 pb-24 sm:pb-6 font-sans relative">
       
-      {/* Toast Notification */}
       {toast.show && (
         <div className="fixed top-5 inset-x-0 z-50 flex justify-center pointer-events-none transition-all duration-300 transform animate-bounce">
           <div className={`flex items-center gap-2.5 px-5 py-2.5 rounded-2xl shadow-2xl backdrop-blur-xl border font-bold text-xs sm:text-sm tracking-wide ${
@@ -798,7 +779,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Top Header */}
       <header className="max-w-4xl mx-auto flex flex-wrap justify-between items-center pb-4 border-b border-gray-800 gap-3">
         <div>
           <h1 className="text-xl sm:text-3xl font-black bg-gradient-to-r from-cyan-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent flex items-center gap-2">
@@ -832,7 +812,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Desktop 3-Tab Clean Navigation */}
       <nav className="hidden sm:flex max-w-4xl mx-auto mt-5 gap-2 border-b border-gray-800 pb-3">
         <button 
           onClick={() => setActiveTab("dashboard")}
@@ -868,10 +847,7 @@ export default function App() {
         </button>
       </nav>
 
-      {/* Main Dynamic View */}
       <main className="max-w-4xl mx-auto mt-4 sm:mt-6">
-        
-        {/* TAB 1: DASHBOARD */}
         {activeTab === "dashboard" && (
           <div className="space-y-4 sm:space-y-6">
             <div className="flex justify-between items-center bg-gray-900/80 border border-cyan-900/50 p-2.5 sm:p-3 rounded-2xl">
@@ -1081,7 +1057,6 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 2: TRENDS & AUDIT */}
         {activeTab === "analytics" && (
           <div className="space-y-6">
             <div className="bg-gray-900/90 border border-gray-800 p-4 sm:p-6 rounded-3xl shadow-xl space-y-6">
@@ -1299,10 +1274,8 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 3: ADD FUNDS */}
         {activeTab === "budget" && (
           <div className="space-y-4 sm:space-y-6 max-w-xl mx-auto">
-            
             <div className="flex justify-between items-center bg-gray-900/80 border border-cyan-900/50 p-2.5 sm:p-3 rounded-2xl">
               <button 
                 disabled={currentIdx === 0} 
@@ -1349,7 +1322,7 @@ export default function App() {
 
                   <input 
                     type="text"
-                    placeholder="Source (e.g., Dad sent, Freelance, Savings)"
+                    placeholder="Source (e.g., Dad sent, Freelance)"
                     value={fundSource}
                     onChange={(e) => setFundSource(e.target.value)}
                     className="w-full px-4 py-3 bg-black/60 border border-gray-700 rounded-xl text-white text-sm focus:outline-none focus:border-cyan-400"
@@ -1408,7 +1381,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Mobile Bottom Navigation Bar */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-gray-950/95 border-t border-gray-800 px-6 py-2.5 flex justify-between items-center backdrop-blur-lg z-50">
         <button 
           onClick={() => setActiveTab("dashboard")}
