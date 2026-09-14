@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">PocketPulse</string>
-    <string name="title_activity_main">PocketPulse</string>
+    <string name="app_name">FinVibe</string>
+    <string name="title_activity_main">FinVibe</string>
     <string name="package_name">com.pocketpulse.app</string>
     <string name="custom_url_scheme">com.pocketpulse.app</string>
 </resources>
